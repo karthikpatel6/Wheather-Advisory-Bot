@@ -11,15 +11,14 @@ Built as a LangGraph agent with a FastAPI backend and a React frontend.
 ### Prerequisites
 - Python 3.11+
 - Node.js 18+
-- A [Groq API key](https://console.groq.com/)
+- A Google Gemini API key (or Groq API key)
 
 ### 1. Clone and create `.env`
 
 ```bash
 git clone <repo-url>
 cd Weather-Advisory-Bot
-cp .env.example .env
-# Edit .env and set GROQ_API_KEY=your_key_here
+# Edit .env and set GEMINI_API_KEY=your_key_here
 ```
 
 ---

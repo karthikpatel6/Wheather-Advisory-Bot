@@ -30,7 +30,16 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_groq import ChatGroq
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+except ImportError:
+    ChatGoogleGenerativeAI = None
+
+try:
+    from langchain_groq import ChatGroq
+except ImportError:
+    ChatGroq = None
+
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from typing_extensions import TypedDict
@@ -49,52 +58,84 @@ logger = logging.getLogger(__name__)
 _policy_store = PolicyStore()
 
 _MODELS_TO_TRY = [
-    os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-    "openai/gpt-oss-120b",
-    "openai/gpt-oss-20b",
-    "qwen/qwen3.6-27b",
-    "groq/compound",
+    os.getenv("GEMINI_MODEL", "gemini-3.7-flash"),
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
 ]
 
 
+def _get_llm_instance(model_name: str) -> Any:
+    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    groq_key = os.getenv("GROQ_API_KEY")
+
+    if model_name.startswith("gemini"):
+        if ChatGoogleGenerativeAI is None:
+            raise ImportError(
+                "langchain-google-genai is missing. Please run: pip install langchain-google-genai"
+            )
+        if gemini_key and not gemini_key.startswith("your_"):
+            return ChatGoogleGenerativeAI(
+                model=model_name,
+                temperature=0,
+                google_api_key=gemini_key,
+            )
+        raise ValueError("GEMINI_API_KEY is not set or invalid in .env")
+
+    if ChatGroq and groq_key and not groq_key.startswith("your_"):
+        return ChatGroq(model=model_name, temperature=0, api_key=groq_key)
+
+    raise ValueError(
+        "No valid LLM API key configured. Please set GEMINI_API_KEY in .env"
+    )
+
+
+def _get_content_text(content: Any) -> str:
+    """Normalize LLM response content to a plain string whether it is a str, list of blocks, or dict."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                if item.get("type") == "text" and "text" in item:
+                    parts.append(item["text"])
+                elif "text" in item:
+                    parts.append(str(item["text"]))
+            else:
+                parts.append(str(item))
+        return "\n".join(parts)
+    return str(content) if content is not None else ""
+
+
 def invoke_llm(messages: list[Any]) -> Any:
-    """Invoke Groq LLM with automatic model fallback.
-
-    Catches all model-level errors (404 not found, 400 decommissioned/deprecated,
-    422 unsupported, etc.) and tries the next model in the list.
-    Only raises if a non-model error occurs (e.g. auth failure, network error).
-    """
+    """Invoke LLM (Google Gemini or Groq) with automatic model fallback."""
     last_exc = None
-    api_key = os.getenv("GROQ_API_KEY")
-
-    # Error strings that indicate a model-level problem, not an auth/quota issue
     _MODEL_ERROR_SIGNALS = (
         "model_not_found", "does not exist", "404",
         "decommissioned", "deprecated", "no longer supported",
-        "400", "422", "model_not_active",
+        "400", "422", "model_not_active", "not_found", "resourceexhausted",
     )
 
     for model_name in _MODELS_TO_TRY:
         try:
-            llm = ChatGroq(
-                model=model_name,
-                temperature=0,
-                api_key=api_key,
-            )
-            return llm.invoke(messages)
+            llm = _get_llm_instance(model_name)
+            res = llm.invoke(messages)
+            if hasattr(res, "content"):
+                res.content = _get_content_text(res.content)
+            return res
         except Exception as exc:
             last_exc = exc
-            err_str = str(exc)
-            # Check if this is a model-availability problem (try next) or
-            # a fatal error we should surface immediately (auth, quota, network)
+            err_str = str(exc).lower()
             is_model_error = any(sig in err_str for sig in _MODEL_ERROR_SIGNALS)
             if is_model_error:
                 logger.warning(
-                    "Groq model '%s' unavailable (%s), trying next fallback...",
+                    "LLM model '%s' unavailable (%s), trying next fallback...",
                     model_name, type(exc).__name__,
                 )
                 continue
-            # Non-model errors: re-raise immediately
             raise exc
 
     if last_exc:
@@ -102,28 +143,26 @@ def invoke_llm(messages: list[Any]) -> Any:
 
 
 def invoke_llm_stream(messages: list[Any]):
-    """Stream token chunks from Groq LLM with automatic model fallback."""
-    api_key = os.getenv("GROQ_API_KEY")
+    """Stream token chunks from LLM (Google Gemini or Groq) with automatic model fallback."""
     _MODEL_ERROR_SIGNALS = (
         "model_not_found", "does not exist", "404",
         "decommissioned", "deprecated", "no longer supported",
-        "400", "422", "model_not_active",
+        "400", "422", "model_not_active", "not_found", "resourceexhausted",
     )
     for model_name in _MODELS_TO_TRY:
         try:
-            llm = ChatGroq(
-                model=model_name,
-                temperature=0,
-                api_key=api_key,
-            )
+            llm = _get_llm_instance(model_name)
             for chunk in llm.stream(messages):
-                if chunk.content:
-                    yield chunk.content
+                raw_content = getattr(chunk, "content", None)
+                if raw_content:
+                    text = _get_content_text(raw_content)
+                    if text:
+                        yield text
             return
         except Exception as exc:
-            err_str = str(exc)
+            err_str = str(exc).lower()
             if any(sig in err_str for sig in _MODEL_ERROR_SIGNALS):
-                logger.warning("Groq stream model '%s' unavailable, trying fallback...", model_name)
+                logger.warning("LLM stream model '%s' unavailable, trying fallback...", model_name)
                 continue
             raise exc
 
