@@ -381,19 +381,59 @@ def resolve_location(state: BotState) -> dict[str, Any]:
 # Node: fetch_weather
 # ---------------------------------------------------------------------------
 
+def _parse_target_hour(user_message: str) -> int | None:
+    """Extract requested target hour (0-23) from user query if a specific time is mentioned."""
+    if not user_message:
+        return None
+    msg = user_message.lower()
+
+    # 1. Match 12-hour format: "11:30 am", "11:30am", "11 am", "3 pm", "3:15pm"
+    match12 = re.search(r'\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b', msg)
+    if match12:
+        hour = int(match12.group(1))
+        meridiem = match12.group(3)
+        if meridiem == "pm" and hour < 12:
+            hour += 12
+        elif meridiem == "am" and hour == 12:
+            hour = 0
+        return hour
+
+    # 2. Match 24-hour format: "14:30", "at 14:00"
+    match24 = re.search(r'\b([01]?\d|2[0-3]):([0-5]\d)\b', msg)
+    if match24:
+        return int(match24.group(1))
+
+    # 3. Match general time of day terms
+    if any(w in msg for w in ["noon", "midday"]):
+        return 12
+    if any(w in msg for w in ["afternoon"]):
+        return 14
+    if any(w in msg for w in ["evening"]):
+        return 18
+    if any(w in msg for w in ["morning"]):
+        return 9
+    if any(w in msg for w in ["night"]):
+        return 21
+
+    return None
+
+
 def fetch_weather_node(state: BotState) -> dict[str, Any]:
-    """Fetch current weather for the resolved location with 15-minute session caching."""
+    """Fetch current or time-specific forecast weather for the resolved location."""
     loc = state["last_location"]
     if not loc:
         return {"failure_reason": "weather_fetch_failed"}
 
-    # Check session cache (15-minute window ONLY IF LOCATION HAS NOT CHANGED)
+    user_msg = state.get("last_user_query") or state["user_message"]
+    target_hour = _parse_target_hour(user_msg)
+
+    # Check session cache (15-minute window ONLY IF LOCATION HAS NOT CHANGED AND NO SPECIFIC TIME WAS REQUESTED)
     last_weather = state.get("last_weather")
     last_weather_ts = state.get("last_weather_ts")
     last_weather_loc = state.get("last_weather_loc")
     current_loc_name = loc.get("display_name")
 
-    if last_weather and last_weather_ts and last_weather_loc == current_loc_name:
+    if target_hour is None and last_weather and last_weather_ts and last_weather_loc == current_loc_name:
         try:
             ts = datetime.fromisoformat(last_weather_ts)
             age_sec = (datetime.now(timezone.utc) - ts).total_seconds()
@@ -404,7 +444,7 @@ def fetch_weather_node(state: BotState) -> dict[str, Any]:
             pass
 
     try:
-        weather = fetch_weather(loc["lat"], loc["lon"])
+        weather = fetch_weather(loc["lat"], loc["lon"], target_hour=target_hour)
         return {
             "last_weather": weather,
             "last_weather_ts": datetime.now(timezone.utc).isoformat(),

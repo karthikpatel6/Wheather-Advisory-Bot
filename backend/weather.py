@@ -127,12 +127,13 @@ def geocode(location_name: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
-def fetch_weather(lat: float, lon: float) -> dict[str, Any]:
-    """Fetch current weather conditions from Open-Meteo for the given coordinates.
+def fetch_weather(lat: float, lon: float, target_hour: int | None = None) -> dict[str, Any]:
+    """Fetch current or target hourly weather conditions from Open-Meteo for the given coordinates.
 
-    Returns a flat dict whose keys are exactly the Open-Meteo field names
-    (matching _CURRENT_FIELDS above). All values are the raw API values
-    (floats, ints, or None if the field was missing).
+    If target_hour (0-23) is provided, extracts forecast values for that specific hour.
+    Otherwise fetches real-time current conditions.
+
+    Returns a flat dict whose keys match _CURRENT_FIELDS.
 
     Raises:
         WeatherFetchError: if the request fails or the payload is malformed.
@@ -141,9 +142,10 @@ def fetch_weather(lat: float, lon: float) -> dict[str, Any]:
         "latitude": lat,
         "longitude": lon,
         "current": ",".join(_CURRENT_FIELDS),
+        "hourly": ",".join(_CURRENT_FIELDS),
         "wind_speed_unit": "kmh",      # keep units consistent with SOP thresholds
         "timezone": "auto",
-        "forecast_days": 1,
+        "forecast_days": 2,
     }
     try:
         resp = requests.get(_FORECAST_URL, params=params, timeout=_REQUEST_TIMEOUT_S)
@@ -155,13 +157,48 @@ def fetch_weather(lat: float, lon: float) -> dict[str, Any]:
             f"Network error while fetching weather for ({lat}, {lon})"
         ) from exc
 
-    current = data.get("current")
+    current = data.get("current", {})
+    hourly = data.get("hourly", {})
+
+    weather: dict[str, Any] = {}
+
+    # If target_hour is requested, attempt to extract hourly forecast for that hour
+    if target_hour is not None and hourly and "time" in hourly:
+        times = hourly["time"]
+        matched_idx = None
+        for idx, t_str in enumerate(times):
+            try:
+                # Open-Meteo hourly time format: "2026-09-07T11:00"
+                h = int(t_str.split("T")[1].split(":")[0])
+                if h == target_hour:
+                    matched_idx = idx
+                    break
+            except Exception:
+                continue
+
+        if matched_idx is not None:
+            for field in _CURRENT_FIELDS:
+                field_list = hourly.get(field, [])
+                if matched_idx < len(field_list):
+                    weather[field] = field_list[matched_idx]
+                else:
+                    weather[field] = current.get(field)
+            logger.info(
+                "Hourly weather fetched for target_hour=%d at (%.4f, %.4f): temp=%.1f°C, wind=%.1f km/h, uv=%.1f",
+                target_hour,
+                lat,
+                lon,
+                weather.get("temperature_2m", float("nan")),
+                weather.get("wind_speed_10m", float("nan")),
+                weather.get("uv_index", float("nan")),
+            )
+            return weather
+
+    # Default to current real-time weather
     if not current or not isinstance(current, dict):
         logger.error("Unexpected weather payload structure: %s", data)
         raise WeatherFetchError("Open-Meteo returned an unexpected payload structure")
 
-    # Flatten: extract just the field values (drop 'time', 'interval' metadata)
-    weather: dict[str, Any] = {}
     for field in _CURRENT_FIELDS:
         val = current.get(field)
         weather[field] = val
@@ -169,7 +206,7 @@ def fetch_weather(lat: float, lon: float) -> dict[str, Any]:
             logger.warning("Field '%s' missing in Open-Meteo response", field)
 
     logger.info(
-        "Weather fetched for (%.4f, %.4f): temp=%.1f°C, wind=%.1f km/h, uv=%.1f",
+        "Current weather fetched for (%.4f, %.4f): temp=%.1f°C, wind=%.1f km/h, uv=%.1f",
         lat,
         lon,
         weather.get("temperature_2m", float("nan")),

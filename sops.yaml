@@ -52,16 +52,15 @@
   condition:
     field: temperature_2m
     operator: ">"
-    value: 38
+    value: 32
   applies_when: >
-    Air temperature exceeds 38°C and the user is asking about any form of outdoor exercise,
-    physical activity, sport, or exertion. This covers heat-stress risk for generally healthy adults.
+    Air temperature exceeds 32°C and the user is asking about any form of outdoor exercise,
+    physical activity, sport, cycling, running, or exertion. This covers heat-stress risk for outdoor activity.
   guidance: >
     The current temperature is {{temperature_2m}}°C (feels like {{apparent_temperature}}°C).
-    Exercising in temperatures above 38°C significantly increases the risk of heat exhaustion
-    and heat stroke. If you must exercise outdoors: hydrate aggressively before, during, and after;
-    reduce intensity; move your session to early morning or after sunset;
-    and stop immediately if you feel dizzy, nauseous, or experience muscle cramps.
+    Exercising in temperatures above 32°C increases the risk of heat exhaustion, heat cramps, and heat stroke.
+    If you must exercise outdoors: hydrate aggressively before, during, and after; reduce intensity;
+    seek shade; move your session to early morning or after sunset; and stop immediately if you feel dizzy or overheated.
 
 - id: SOP-004
   category: outdoor_exercise
