@@ -528,12 +528,15 @@ TESTS = [
 
 
 def main() -> None:
+    import time
     print("=" * 72)
     print("  Weather Advisory Bot — Eval Suite")
     print("=" * 72)
 
     results: list[bool] = []
-    for test_fn in TESTS:
+    for i, test_fn in enumerate(TESTS):
+        if i > 0:
+            time.sleep(1.5)  # Pace calls to respect free tier rate limits
         try:
             passed = test_fn()
         except Exception as exc:

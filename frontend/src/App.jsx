@@ -134,7 +134,16 @@ function Message({ msg, sopRegistry }) {
       </div>
       <div className="message__body">
         <div className="message__bubble">
-          <p className="message__text">{msg.text}</p>
+          {!isUser && !msg.text ? (
+            <div className="typing-indicator" aria-label="Thinking...">
+              <span /><span /><span />
+            </div>
+          ) : (
+            <p className="message__text">
+              {msg.text}
+              {msg.isStreaming && <span className="streaming-cursor">▌</span>}
+            </p>
+          )}
           {!isUser && msg.weatherUsed && (
             <WeatherPanel weatherUsed={msg.weatherUsed} />
           )}
@@ -144,23 +153,6 @@ function Message({ msg, sopRegistry }) {
             <SopBadge sopId={msg.sopId} sopRegistry={sopRegistry} />
           </div>
         )}
-      </div>
-    </div>
-  )
-}
-
-// ─── Typing indicator ─────────────────────────────────────────────────────────
-
-function TypingIndicator() {
-  return (
-    <div className="message message--bot" role="status" aria-label="Bot is typing">
-      <div className="message__avatar" aria-hidden="true">🤖</div>
-      <div className="message__body">
-        <div className="message__bubble">
-          <div className="typing-indicator">
-            <span /><span /><span />
-          </div>
-        </div>
       </div>
     </div>
   )
@@ -248,7 +240,7 @@ const API_STREAM_URL = `${API_BASE}/chat/stream`
     setMessages(prev => [
       ...prev,
       userMsg,
-      { id: botMsgId, role: 'bot', text: '', sopId: null, weatherUsed: null }
+      { id: botMsgId, role: 'bot', text: '', sopId: null, weatherUsed: null, isStreaming: true }
     ])
     setInput('')
     setLoading(true)
@@ -305,6 +297,7 @@ const API_STREAM_URL = `${API_BASE}/chat/stream`
         text: `⚠️ Could not reach the advisory server.\n\nMake sure the backend is running:\n  cd backend && uvicorn main:app --reload --port 8000\n\n(${err.message})`,
       } : m))
     } finally {
+      setMessages(prev => prev.map(m => m.id === botMsgId ? { ...m, isStreaming: false } : m))
       setLoading(false)
       textareaRef.current?.focus()
     }
@@ -350,7 +343,6 @@ const API_STREAM_URL = `${API_BASE}/chat/stream`
         {messages.map(msg => (
           <Message key={msg.id} msg={msg} sopRegistry={sopRegistry} />
         ))}
-        {loading && <TypingIndicator />}
         {showSuggestions && !loading && (
           <Suggestions onSelect={handleSuggestion} />
         )}

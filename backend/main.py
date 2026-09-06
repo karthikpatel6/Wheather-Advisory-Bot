@@ -102,14 +102,9 @@ async def chat(request: ChatRequest) -> ChatResponse:
     """Process a user message and return a safety advisory reply."""
     logger.info("POST /chat thread_id=%s message=%r", request.thread_id, request.message[:80])
 
-    initial_state = {
+    turn_input = {
         "thread_id": request.thread_id,
         "user_message": request.message,
-        "last_location": None,
-        "last_weather": None,
-        "last_weather_ts": None,
-        "last_sop_id": None,
-        "last_user_query": None,
         "numeric_candidate_ids": [],
         "selected_sop_id": None,
         "secondary_sop_id": None,
@@ -122,7 +117,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
     config = {"configurable": {"thread_id": request.thread_id}}
 
     try:
-        final_state = await graph.ainvoke(initial_state, config=config)
+        final_state = await graph.ainvoke(turn_input, config=config)
     except Exception as exc:
         logger.exception("Unhandled error in graph.ainvoke: %s", exc)
         return ChatResponse(
@@ -163,14 +158,9 @@ async def chat_stream(request: ChatRequest):
     logger.info("POST /chat/stream thread_id=%s message=%r", request.thread_id, request.message[:80])
 
     async def event_generator():
-        initial_state = {
+        turn_input = {
             "thread_id": request.thread_id,
             "user_message": request.message,
-            "last_location": None,
-            "last_weather": None,
-            "last_weather_ts": None,
-            "last_sop_id": None,
-            "last_user_query": None,
             "numeric_candidate_ids": [],
             "selected_sop_id": None,
             "secondary_sop_id": None,
@@ -182,7 +172,7 @@ async def chat_stream(request: ChatRequest):
         config = {"configurable": {"thread_id": request.thread_id}}
 
         try:
-            final_state = await graph.ainvoke(initial_state, config=config)
+            final_state = await graph.ainvoke(turn_input, config=config)
         except Exception as exc:
             logger.exception("Unhandled error in streaming graph.ainvoke: %s", exc)
             yield f"data: {json.dumps({'type': 'error', 'content': 'An unexpected error occurred.'})}\n\n"
