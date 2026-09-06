@@ -57,24 +57,16 @@ logger = logging.getLogger(__name__)
 
 _policy_store = PolicyStore()
 
-_GROQ_MODELS = [
-    os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-    "llama3-70b-8192",
-    "llama3-8b-8192",
-    "mixtral-8x7b-32768",
-    "gemma2-9b-it",
-]
+_UNHEALTHY_MODELS: set[str] = set()
+
+_GROQ_MODELS = ["llama-3.3-70b-versatile"]
 _GEMINI_MODELS = [
     os.getenv("GEMINI_MODEL", "gemini-3.7-flash"),
     "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
 ]
-# Groq first (faster, generous quota), Gemini as fallback — deduplicated
+# Groq first (llama-3.3-70b-versatile), then 3 Gemini models — deduplicated
 _MODELS_TO_TRY = list(dict.fromkeys(_GROQ_MODELS + _GEMINI_MODELS))
 
 
@@ -133,9 +125,12 @@ def invoke_llm(messages: list[Any]) -> Any:
         "400", "422", "429", "model_not_active", "not_found",
         "resourceexhausted", "quota", "rate_limit", "rate limit",
         "invalid_api_key", "unauthorized", "authentication", "notfounderror",
+        "badrequesterror",
     )
 
     for model_name in _MODELS_TO_TRY:
+        if model_name in _UNHEALTHY_MODELS:
+            continue
         try:
             llm = _get_llm_instance(model_name)
             res = llm.invoke(messages)
@@ -147,10 +142,17 @@ def invoke_llm(messages: list[Any]) -> Any:
             err_str = str(exc).lower()
             is_model_error = any(sig in err_str for sig in _MODEL_ERROR_SIGNALS)
             if is_model_error:
-                logger.warning(
-                    "LLM model '%s' unavailable (%s), trying next fallback...",
-                    model_name, type(exc).__name__,
-                )
+                if any(sig in err_str for sig in ("404", "400", "not_found", "notfounderror", "badrequesterror", "invalid_api_key", "unauthorized")):
+                    logger.warning(
+                        "LLM model '%s' returned permanent error (%s); blacklisting for session.",
+                        model_name, type(exc).__name__,
+                    )
+                    _UNHEALTHY_MODELS.add(model_name)
+                else:
+                    logger.warning(
+                        "LLM model '%s' unavailable (%s), trying next fallback...",
+                        model_name, type(exc).__name__,
+                    )
                 continue
             raise exc
 
@@ -168,6 +170,8 @@ def invoke_llm_stream(messages: list[Any]):
         "invalid_api_key", "unauthorized", "authentication", "notfounderror",
     )
     for model_name in _MODELS_TO_TRY:
+        if model_name in _UNHEALTHY_MODELS:
+            continue
         try:
             llm = _get_llm_instance(model_name)
             for chunk in llm.stream(messages):
@@ -180,6 +184,8 @@ def invoke_llm_stream(messages: list[Any]):
         except Exception as exc:
             err_str = str(exc).lower()
             if any(sig in err_str for sig in _MODEL_ERROR_SIGNALS):
+                if any(sig in err_str for sig in ("404", "400", "not_found", "notfounderror", "badrequesterror", "invalid_api_key", "unauthorized")):
+                    _UNHEALTHY_MODELS.add(model_name)
                 logger.warning("LLM stream model '%s' unavailable, trying fallback...", model_name)
                 continue
             raise exc
