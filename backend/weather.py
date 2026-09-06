@@ -149,20 +149,47 @@ def fetch_weather(lat: float, lon: float, target_hour: int | None = None) -> dic
     Raises:
         WeatherFetchError: if the request fails or the payload is malformed.
     """
+    # Open-Meteo hourly API supports a slightly different field set — only request hourly when needed
+    _HOURLY_FIELDS = [
+        "temperature_2m",
+        "apparent_temperature",
+        "relative_humidity_2m",
+        "wind_speed_10m",
+        "wind_gusts_10m",
+        "precipitation",
+        "rain",
+        "showers",
+        "snowfall",
+        "weather_code",
+        "cloud_cover",
+        "uv_index",
+        "surface_pressure",
+    ]
+
     params = {
         "latitude": lat,
         "longitude": lon,
         "current": ",".join(_CURRENT_FIELDS),
-        "hourly": ",".join(_CURRENT_FIELDS),
         "wind_speed_unit": "kmh",      # keep units consistent with SOP thresholds
         "timezone": "auto",
-        "forecast_days": 2,
+        "forecast_days": 1,
     }
+
+    # Only request hourly data if we actually need it for a specific time
+    if target_hour is not None:
+        params["hourly"] = ",".join(_HOURLY_FIELDS)
+        params["forecast_days"] = 2
+
     last_exc = None
     for attempt in range(2):
         try:
-            resp = requests.get(_FORECAST_URL, params=params, headers=_HEADERS, timeout=_REQUEST_TIMEOUT_S)
-            resp.raise_for_status()
+            resp = requests.get(_FORECAST_URL, params=params, headers=_HEADERS, timeout=15)
+            if not resp.ok:
+                logger.error(
+                    "Weather API returned HTTP %d for (%.4f, %.4f): %s",
+                    resp.status_code, lat, lon, resp.text[:300]
+                )
+                resp.raise_for_status()
             data = resp.json()
             break
         except requests.RequestException as exc:
