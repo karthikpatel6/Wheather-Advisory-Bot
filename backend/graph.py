@@ -528,6 +528,26 @@ def llm_select_sop(state: BotState) -> dict[str, Any]:
                     "reasoning": "LLM call failed; used highest numeric candidate as fallback",
                 }
 
+        # Fallback for semantic SOPs when LLM API is unavailable/rate-limited
+        msg_lower = user_msg.lower()
+        semantic_fallback_id = None
+        if any(w in msg_lower for w in ["cycle", "cycling", "bike", "biking", "run", "running", "jog", "jogging", "exercise", "outdoor"]):
+            semantic_fallback_id = "SOP-011"
+        elif any(w in msg_lower for w in ["picnic", "sit outside", "eat outside"]):
+            semantic_fallback_id = "SOP-010"
+        elif any(w in msg_lower for w in ["drive", "driving", "road trip", "travel"]):
+            semantic_fallback_id = "SOP-006"
+
+        if semantic_fallback_id:
+            fallback = _policy_store.get_by_id(semantic_fallback_id)
+            if fallback:
+                logger.warning("LLM call failed; using semantic fallback SOP: %s", fallback["id"])
+                return {
+                    "selected_sop_id": fallback["id"],
+                    "secondary_sop_id": None,
+                    "reasoning": f"LLM API unavailable; matched semantic fallback SOP {fallback['id']}",
+                }
+
         return {
             "selected_sop_id": None,
             "secondary_sop_id": None,
