@@ -294,10 +294,27 @@ def resolve_location(state: BotState) -> dict[str, Any]:
         except LocationNotFoundError:
             pass
 
+    # Step 1.5: Preposition-based zero-latency location extraction (e.g. "in Mumbai", "at London", "near Bhopal")
+    loc_match = re.search(r'\b(?:in|at|near|for|around|from)\s+([A-Za-z\s\-]+?)(?=\s*(?:today|now|this|right|tomorrow|\?|\.|$))', user_msg, re.IGNORECASE)
+    if loc_match:
+        potential_name = loc_match.group(1).strip(" \"'.,!?")
+        stop_words = {"the", "a", "an", "work", "home", "outside", "the park", "the beach", "the gym", "my area"}
+        if potential_name.lower() not in stop_words and len(potential_name) >= 3:
+            try:
+                location = geocode(potential_name)
+                logger.info("resolve_location: preposition geocoded '%s' -> %s OK", potential_name, location["display_name"])
+                return {
+                    "last_location": location,
+                    "last_user_query": current_query,
+                    "failure_reason": None,
+                }
+            except LocationNotFoundError:
+                pass
+
     # Step 2: Use LLM to extract location name from user message
     candidate = _extract_location_llm(user_msg)
 
-    # Step 3: If no new location extracted by LLM, reuse session location if available
+    # Step 3: If no location extracted by LLM, reuse session location if available
     if not candidate:
         if existing_loc:
             logger.info("resolve_location: reusing session location %s", existing_loc.get("display_name"))
