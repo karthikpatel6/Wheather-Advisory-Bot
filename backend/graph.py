@@ -184,6 +184,7 @@ class BotState(TypedDict):
     last_location: dict[str, Any] | None      # {lat, lon, display_name}
     last_weather: dict[str, Any] | None        # flat Open-Meteo fields
     last_weather_ts: str | None                # ISO timestamp of last fetch
+    last_weather_loc: str | None               # Display name of cached location
     last_sop_id: str | None
     last_user_query: str | None                # last activity question across turns
 
@@ -298,7 +299,10 @@ def resolve_location(state: BotState) -> dict[str, Any]:
     loc_match = re.search(r'\b(?:in|at|near|for|around|from)\s+([A-Za-z\s\-]+?)(?=\s*(?:today|now|this|right|tomorrow|\?|\.|$))', user_msg, re.IGNORECASE)
     if loc_match:
         potential_name = loc_match.group(1).strip(" \"'.,!?")
-        stop_words = {"the", "a", "an", "work", "home", "outside", "the park", "the beach", "the gym", "my area"}
+        stop_words = {
+            "the", "a", "an", "work", "home", "outside", "the park", "the beach",
+            "the gym", "my area", "mountains", "the mountains", "hills", "the hills", "the city"
+        }
         if potential_name.lower() not in stop_words and len(potential_name) >= 3:
             try:
                 location = geocode(potential_name)
@@ -355,15 +359,18 @@ def fetch_weather_node(state: BotState) -> dict[str, Any]:
     if not loc:
         return {"failure_reason": "weather_fetch_failed"}
 
-    # Check session cache (15-minute window for same location)
+    # Check session cache (15-minute window ONLY IF LOCATION HAS NOT CHANGED)
     last_weather = state.get("last_weather")
     last_weather_ts = state.get("last_weather_ts")
-    if last_weather and last_weather_ts:
+    last_weather_loc = state.get("last_weather_loc")
+    current_loc_name = loc.get("display_name")
+
+    if last_weather and last_weather_ts and last_weather_loc == current_loc_name:
         try:
             ts = datetime.fromisoformat(last_weather_ts)
             age_sec = (datetime.now(timezone.utc) - ts).total_seconds()
             if age_sec < 900:  # 15 minutes
-                logger.info("fetch_weather_node: reusing cached session weather (age=%.1fs)", age_sec)
+                logger.info("fetch_weather_node: reusing cached weather for '%s' (age=%.1fs)", current_loc_name, age_sec)
                 return {"failure_reason": None}
         except Exception:
             pass
@@ -373,6 +380,7 @@ def fetch_weather_node(state: BotState) -> dict[str, Any]:
         return {
             "last_weather": weather,
             "last_weather_ts": datetime.now(timezone.utc).isoformat(),
+            "last_weather_loc": current_loc_name,
             "failure_reason": None,
         }
     except WeatherFetchError as exc:
