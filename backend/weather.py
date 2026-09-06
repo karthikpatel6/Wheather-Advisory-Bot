@@ -70,6 +70,12 @@ _REQUEST_TIMEOUT_S = 10  # seconds
 # --------------------------------------------------------------------------
 
 
+_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) WeatherAdvisoryBot/1.0",
+    "Accept": "application/json",
+}
+
+
 def geocode(location_name: str) -> dict[str, Any]:
     """Resolve a free-text location name to lat/lon via Open-Meteo geocoding.
 
@@ -85,15 +91,20 @@ def geocode(location_name: str) -> dict[str, Any]:
         "language": "en",
         "format": "json",
     }
-    try:
-        resp = requests.get(_GEOCODE_URL, params=params, timeout=_REQUEST_TIMEOUT_S)
-        resp.raise_for_status()
-        data = resp.json()
-    except requests.RequestException as exc:
-        logger.error("Geocoding request failed for '%s': %s", location_name, exc)
+    last_exc = None
+    for attempt in range(2):
+        try:
+            resp = requests.get(_GEOCODE_URL, params=params, headers=_HEADERS, timeout=_REQUEST_TIMEOUT_S)
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except requests.RequestException as exc:
+            last_exc = exc
+            logger.warning("Geocoding attempt %d failed for '%s': %s", attempt + 1, location_name, exc)
+    else:
         raise LocationNotFoundError(
-            f"Network error while geocoding '{location_name}'"
-        ) from exc
+            f"Network error while geocoding '{location_name}': {last_exc}"
+        )
 
     results = data.get("results")
     if not results:
@@ -147,15 +158,20 @@ def fetch_weather(lat: float, lon: float, target_hour: int | None = None) -> dic
         "timezone": "auto",
         "forecast_days": 2,
     }
-    try:
-        resp = requests.get(_FORECAST_URL, params=params, timeout=_REQUEST_TIMEOUT_S)
-        resp.raise_for_status()
-        data = resp.json()
-    except requests.RequestException as exc:
-        logger.error("Weather fetch failed for (%.4f, %.4f): %s", lat, lon, exc)
+    last_exc = None
+    for attempt in range(2):
+        try:
+            resp = requests.get(_FORECAST_URL, params=params, headers=_HEADERS, timeout=_REQUEST_TIMEOUT_S)
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except requests.RequestException as exc:
+            last_exc = exc
+            logger.warning("Weather fetch attempt %d failed for (%.4f, %.4f): %s", attempt + 1, lat, lon, exc)
+    else:
         raise WeatherFetchError(
-            f"Network error while fetching weather for ({lat}, {lon})"
-        ) from exc
+            f"Network error while fetching weather for ({lat}, {lon}): {last_exc}"
+        )
 
     current = data.get("current", {})
     hourly = data.get("hourly", {})
