@@ -42,7 +42,7 @@ app = FastAPI(
     description=(
         "Answers outdoor-activity safety questions using live Open-Meteo weather data "
         "matched against a fixed set of policy rules (SOPs)."
-    ),
+    ), 
     version="1.0.0",
 )
 
