@@ -1,0 +1,207 @@
+# Weather Advisory Bot — Standard Operating Procedures
+# Schema per SOP:
+#   id:          unique identifier (SOP-00X)
+#   category:    grouping label (no code logic depends on category name)
+#   severity:    low | moderate | high | critical
+#   match_type:  numeric | semantic
+#   condition:   (numeric only) field / operator / value  — field must match Open-Meteo response field names exactly
+#   applies_when: natural-language description for LLM gate (present on ALL SOPs)
+#   guidance:    the actual advice text; may contain {{field_name}} placeholders resolved at reply time
+
+- id: SOP-001
+  category: outdoor_exercise
+  severity: high
+  match_type: numeric
+  condition:
+    field: wind_speed_10m
+    operator: ">"
+    value: 50
+  applies_when: >
+    Wind speeds are dangerously high (above 50 km/h) and the user is asking about cycling,
+    biking, riding, or any activity that involves moving quickly on two wheels outdoors.
+    High winds create serious stability and collision risks for cyclists.
+  guidance: >
+    Wind speeds are currently {{wind_speed_10m}} km/h, well above the safe threshold for cycling.
+    Gusts could reach {{wind_gusts_10m}} km/h. Cycling is not recommended under these conditions —
+    crosswinds at this level can destabilize a bicycle and reduce vehicle visibility of riders.
+    Consider postponing until winds drop below 30 km/h.
+
+- id: SOP-002
+  category: outdoor_exercise
+  severity: moderate
+  match_type: numeric
+  condition:
+    field: uv_index
+    operator: ">="
+    value: 8
+  applies_when: >
+    The UV index is very high (8 or above) and the user is asking about outdoor exercise,
+    running, jogging, working out outside, or any prolonged sun exposure during daytime hours.
+    This SOP covers sun-protection risk during physical activity.
+  guidance: >
+    The UV index is currently {{uv_index}}, which is in the very high to extreme range.
+    Prolonged outdoor exercise without adequate sun protection carries a significant risk of
+    sunburn, heat exhaustion, and UV-related skin damage. If you go out, apply SPF 50+
+    sunscreen, wear UV-protective clothing, and avoid peak sun hours (10 am – 4 pm).
+    Limit session duration and take shade breaks.
+
+- id: SOP-003
+  category: outdoor_exercise
+  severity: moderate
+  match_type: numeric
+  condition:
+    field: temperature_2m
+    operator: ">"
+    value: 38
+  applies_when: >
+    Air temperature exceeds 38°C and the user is asking about any form of outdoor exercise,
+    physical activity, sport, or exertion. This covers heat-stress risk for generally healthy adults.
+  guidance: >
+    The current temperature is {{temperature_2m}}°C (feels like {{apparent_temperature}}°C).
+    Exercising in temperatures above 38°C significantly increases the risk of heat exhaustion
+    and heat stroke. If you must exercise outdoors: hydrate aggressively before, during, and after;
+    reduce intensity; move your session to early morning or after sunset;
+    and stop immediately if you feel dizzy, nauseous, or experience muscle cramps.
+
+- id: SOP-004
+  category: outdoor_exercise
+  severity: low
+  match_type: numeric
+  condition:
+    field: precipitation
+    operator: ">"
+    value: 5
+  applies_when: >
+    Precipitation is above 5 mm in the current hour and the user is asking about outdoor exercise,
+    running, sports, or any physical activity that would be disrupted or made unsafe by rain.
+    Does not apply to indoor activities or activities explicitly designed for wet conditions.
+  guidance: >
+    Current precipitation is {{precipitation}} mm/hr. Wet conditions will make outdoor surfaces
+    slippery and reduce visibility. Most outdoor exercise can continue with appropriate rain gear,
+    but contact sports and cycling on roads carry additional risk. Watch for standing water,
+    reduced traction, and lightning if there is thunder in the area.
+
+- id: SOP-005
+  category: travel
+  severity: high
+  match_type: numeric
+  condition:
+    field: wind_gusts_10m
+    operator: ">"
+    value: 70
+  applies_when: >
+    Wind gusts exceed 70 km/h and the user is asking about driving, road travel, commuting,
+    taking a trip, or any surface transportation. High gusts pose serious risks to high-sided
+    vehicles, motorcycles, and can throw debris onto roadways.
+  guidance: >
+    Wind gusts are currently reaching {{wind_gusts_10m}} km/h with sustained winds of
+    {{wind_speed_10m}} km/h. Travel is hazardous under these conditions: high-sided vehicles
+    (trucks, vans, SUVs) face significant crosswind instability; fallen trees and debris are
+    a collision risk. Avoid unnecessary travel. If you must drive, reduce speed, keep both
+    hands on the wheel, and allow extra stopping distance.
+
+- id: SOP-006
+  category: travel
+  severity: low
+  match_type: semantic
+  applies_when: >
+    The user is asking a general travel or road-trip suitability question (e.g. "is it a good
+    day for a road trip", "should I drive to the mountains today", "is it good travel weather")
+    and no other higher-severity SOP has been triggered. This SOP covers general comfort
+    assessment for travel when conditions are not hazardous but may be uncomfortable.
+  guidance: >
+    Travel conditions in your area are generally favorable today.
+    Temperature is {{temperature_2m}}°C with winds at {{wind_speed_10m}} km/h and precipitation at {{precipitation}} mm.
+    No severe hazards are flagged for travel at this time, but check your local route for
+    any road closures or advisories, particularly if crossing elevated terrain or coastal areas.
+
+- id: SOP-007
+  category: vulnerable_groups
+  severity: high
+  match_type: numeric
+  condition:
+    field: apparent_temperature
+    operator: ">"
+    value: 40
+  applies_when: >
+    The apparent (feels-like) temperature is above 40°C and the user is asking about outdoor
+    activity for children, elderly individuals, infants, pregnant women, or people with
+    chronic health conditions. Extreme heat stress is disproportionately dangerous for these groups.
+  guidance: >
+    The apparent temperature is {{apparent_temperature}}°C — extreme heat stress territory.
+    For children, the elderly, or anyone with heart, respiratory, or chronic health conditions,
+    outdoor exposure in these conditions carries serious medical risk including heat stroke.
+    Keep vulnerable individuals indoors in air-conditioned spaces. Ensure continuous hydration.
+    If outdoor exposure is unavoidable, limit it to under 10 minutes, provide shade,
+    and watch for warning signs: confusion, flushed skin, rapid pulse, or unresponsiveness.
+
+- id: SOP-008
+  category: vulnerable_groups
+  severity: moderate
+  match_type: numeric
+  condition:
+    field: uv_index
+    operator: ">="
+    value: 6
+  applies_when: >
+    The UV index is 6 or above (high range) and the user is asking about children playing
+    outdoors, a child's outdoor activity, kids at the park or beach, or similar situations
+    involving prolonged sun exposure for young children (typically under 12).
+  guidance: >
+    The UV index is {{uv_index}} today, which is in the high range. Children's skin burns
+    faster than adults'. Apply broad-spectrum SPF 50+ sunscreen 20 minutes before going out
+    and reapply every 90 minutes. Dress children in sun-protective clothing and hats.
+    Schedule outdoor time before 10 am or after 4 pm when UV levels are lower.
+
+- id: SOP-009
+  category: severe_weather
+  severity: critical
+  match_type: semantic
+  applies_when: >
+    Weather data indicates an active severe weather system, including any of the following:
+    cyclonic activity, named storm or depression, organized low-pressure system bringing heavy
+    rain and strong winds together, conditions consistent with a tropical storm or cyclone
+    (sustained winds above 60 km/h combined with heavy precipitation above 20 mm/hr and low
+    surface pressure below 1000 hPa), or any weather_code in the severe thunderstorm or
+    heavy storm range (above 80). This SOP overrides normal per-category thresholds and
+    applies regardless of what specific activity the user asked about, because the risk
+    level from an active weather system is systemic, not activity-specific.
+  guidance: >
+    Current conditions indicate an active severe weather system in your area.
+    Wind speeds are {{wind_speed_10m}} km/h with gusts to {{wind_gusts_10m}} km/h,
+    precipitation is {{precipitation}} mm/hr, and surface pressure is {{surface_pressure}} hPa.
+    Under an active severe weather system, all outdoor activities carry elevated risk.
+    Stay indoors, away from windows, and monitor official weather authority alerts for your region.
+    Do not drive unless absolutely necessary. Have an emergency kit accessible.
+
+- id: SOP-010
+  category: outdoor_exercise
+  severity: low
+  match_type: semantic
+  applies_when: >
+    The user is asking a general pleasantness or comfort question about being outdoors —
+    for example "is today good for a picnic", "is it a nice day to sit outside", "is the
+    weather pleasant today", "would it be enjoyable to eat outside" — and conditions do not
+    trigger any higher-severity SOP. This SOP covers the positive-case assessment where
+    weather is comfortable and no hazards are present.
+  guidance: >
+    Today's conditions look suitable for a pleasant outdoor experience.
+    Temperature is {{temperature_2m}}°C (feels like {{apparent_temperature}}°C),
+    with {{cloud_cover}}% cloud cover and winds at {{wind_speed_10m}} km/h.
+    Current precipitation is {{precipitation}} mm. Bring sunscreen if you'll be out long —
+    UV index is {{uv_index}}. Enjoy the outdoors!
+
+- id: SOP-011
+  category: outdoor_exercise
+  severity: low
+  match_type: semantic
+  applies_when: >
+    The user is asking whether it is safe or good to cycle, bike, ride, run, jog, or perform outdoor
+    exercise today, and weather conditions do not trigger any high-severity hazard SOPs (no extreme
+    wind, heat, rain, or UV). This SOP provides a favorable safety advisory for normal exercise conditions.
+  guidance: >
+    Conditions for outdoor exercise and cycling in your area are favorable today.
+    Temperature is {{temperature_2m}}°C (feels like {{apparent_temperature}}°C) with winds at
+    {{wind_speed_10m}} km/h and precipitation at {{precipitation}} mm. No major weather hazards are flagged.
+    Have a safe and great activity!
+
