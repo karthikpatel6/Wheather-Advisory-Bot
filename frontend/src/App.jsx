@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import './App.css'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 const API_URL = `${API_BASE}/chat`
 const SOPS_URL = `${API_BASE}/sops`
 
@@ -20,17 +20,17 @@ const SEV_CLASS = {
 // Map SOP id prefix to severity (best-effort, shown while waiting for server)
 // Real severity comes from the server response
 const SOP_LABELS = {
-  'SOP-001': { severity: 'high',     category: 'Wind' },
+  'SOP-001': { severity: 'high', category: 'Wind' },
   'SOP-002': { severity: 'moderate', category: 'UV Index' },
   'SOP-003': { severity: 'moderate', category: 'Heat' },
-  'SOP-004': { severity: 'low',      category: 'Rain' },
-  'SOP-005': { severity: 'high',     category: 'Travel' },
-  'SOP-006': { severity: 'low',      category: 'Travel' },
-  'SOP-007': { severity: 'high',     category: 'Vulnerable Groups' },
+  'SOP-004': { severity: 'low', category: 'Rain' },
+  'SOP-005': { severity: 'high', category: 'Travel' },
+  'SOP-006': { severity: 'low', category: 'Travel' },
+  'SOP-007': { severity: 'high', category: 'Vulnerable Groups' },
   'SOP-008': { severity: 'moderate', category: 'Children UV' },
   'SOP-009': { severity: 'critical', category: 'Severe Weather' },
-  'SOP-010': { severity: 'low',      category: 'Comfort' },
-  'SOP-011': { severity: 'low',      category: 'Exercise' },
+  'SOP-010': { severity: 'low', category: 'Comfort' },
+  'SOP-011': { severity: 'low', category: 'Exercise' },
 }
 
 const SUGGESTIONS = [
@@ -66,20 +66,20 @@ function WeatherPanel({ weatherUsed }) {
   if (!weatherUsed || Object.keys(weatherUsed).length === 0) return null
 
   const FIELD_UNITS = {
-    temperature_2m:       '°C',
+    temperature_2m: '°C',
     apparent_temperature: '°C',
     relative_humidity_2m: '%',
-    wind_speed_10m:       ' km/h',
-    wind_gusts_10m:       ' km/h',
-    precipitation:        ' mm',
-    rain:                 ' mm',
-    showers:              ' mm',
-    snowfall:             ' cm',
-    weather_code:         '',
-    cloud_cover:          '%',
-    uv_index:             '',
-    visibility:           ' m',
-    surface_pressure:     ' hPa',
+    wind_speed_10m: ' km/h',
+    wind_gusts_10m: ' km/h',
+    precipitation: ' mm',
+    rain: ' mm',
+    showers: ' mm',
+    snowfall: ' cm',
+    weather_code: '',
+    cloud_cover: '%',
+    uv_index: '',
+    visibility: ' m',
+    surface_pressure: ' hPa',
   }
 
   return (
@@ -225,7 +225,7 @@ export default function App() {
     ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'
   }, [input])
 
-const API_STREAM_URL = `${API_BASE}/chat/stream`
+  const API_STREAM_URL = `${API_BASE}/chat/stream`
 
   const sendMessage = useCallback(async (textOverride) => {
     const text = (textOverride ?? input).trim()
@@ -236,7 +236,7 @@ const API_STREAM_URL = `${API_BASE}/chat/stream`
 
     const userMsg = { id: uuidv4(), role: 'user', text, sopId: null }
     const botMsgId = uuidv4()
-    
+
     setMessages(prev => [
       ...prev,
       userMsg,
@@ -343,6 +343,7 @@ const API_STREAM_URL = `${API_BASE}/chat/stream`
         {messages.map(msg => (
           <Message key={msg.id} msg={msg} sopRegistry={sopRegistry} />
         ))}
+        {loading && <TypingIndicator />}
         {showSuggestions && !loading && (
           <Suggestions onSelect={handleSuggestion} />
         )}
