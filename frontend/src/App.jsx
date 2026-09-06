@@ -343,7 +343,6 @@ export default function App() {
         {messages.map(msg => (
           <Message key={msg.id} msg={msg} sopRegistry={sopRegistry} />
         ))}
-        {loading && <TypingIndicator />}
         {showSuggestions && !loading && (
           <Suggestions onSelect={handleSuggestion} />
         )}
