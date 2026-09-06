@@ -57,12 +57,15 @@ logger = logging.getLogger(__name__)
 
 _policy_store = PolicyStore()
 
-_MODELS_TO_TRY = [
+_GROQ_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+_GEMINI_MODELS = [
     os.getenv("GEMINI_MODEL", "gemini-3.7-flash"),
     "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
 ]
+# Groq first (faster, generous quota), Gemini as fallback — deduplicated
+_MODELS_TO_TRY = list(dict.fromkeys(_GROQ_MODELS + _GEMINI_MODELS))
 
 
 def _get_llm_instance(model_name: str) -> Any:
@@ -275,53 +278,23 @@ def _resolve_query_context(current_msg: str, previous_query: str | None) -> str:
 
 
 def resolve_location(state: BotState) -> dict[str, Any]:
-    """Resolve location using direct geocoding attempt, LLM semantic extraction, and Open-Meteo geocoding."""
+    """Resolve location using LLM semantic extraction followed by Open-Meteo geocoding validation.
+
+    LLM is the sole extraction engine — no regex heuristics. This handles any phrasing
+    naturally: 'Is it a good day for a picnic in London?' → LLM extracts 'London'.
+    """
     user_msg = state["user_message"].strip()
     prev_query = state.get("last_user_query")
     current_query = _resolve_query_context(user_msg, prev_query)
     existing_loc = state.get("last_location")
 
-    # Step 1: For short inputs (1-3 words e.g. "Hyderabad", "Tokyo", "New York"), try direct geocoding first (saves LLM quota)
-    words = user_msg.split()
-    if len(words) <= 3 and not any(w in user_msg.lower() for w in ["is", "can", "should", "weather", "safe", "what", "how", "why"]):
-        try:
-            location = geocode(user_msg.strip(" \"'.,!?"))
-            logger.info("resolve_location: direct geocoded short input '%s' -> %s OK", user_msg, location["display_name"])
-            return {
-                "last_location": location,
-                "last_user_query": current_query,
-                "failure_reason": None,
-            }
-        except LocationNotFoundError:
-            pass
-
-    # Step 1.5: Preposition-based zero-latency location extraction (e.g. "in Mumbai", "at London", "near Bhopal")
-    loc_match = re.search(r'\b(?:in|at|near|for|around|from)\s+([A-Za-z\s\-]+?)(?=\s*(?:today|now|this|right|tomorrow|\?|\.|$))', user_msg, re.IGNORECASE)
-    if loc_match:
-        potential_name = loc_match.group(1).strip(" \"'.,!?")
-        stop_words = {
-            "the", "a", "an", "work", "home", "outside", "the park", "the beach",
-            "the gym", "my area", "mountains", "the mountains", "hills", "the hills", "the city"
-        }
-        if potential_name.lower() not in stop_words and len(potential_name) >= 3:
-            try:
-                location = geocode(potential_name)
-                logger.info("resolve_location: preposition geocoded '%s' -> %s OK", potential_name, location["display_name"])
-                return {
-                    "last_location": location,
-                    "last_user_query": current_query,
-                    "failure_reason": None,
-                }
-            except LocationNotFoundError:
-                pass
-
-    # Step 2: Use LLM to extract location name from user message
+    # Step 1: Ask LLM to extract the location name from the user message
     candidate = _extract_location_llm(user_msg)
 
-    # Step 3: If no location extracted by LLM, reuse session location if available
+    # Step 2: If LLM found no location, reuse session location if available
     if not candidate:
         if existing_loc:
-            logger.info("resolve_location: reusing session location %s", existing_loc.get("display_name"))
+            logger.info("resolve_location: no new location in message; reusing session location %s", existing_loc.get("display_name"))
             return {
                 "last_user_query": current_query,
                 "failure_reason": None,
