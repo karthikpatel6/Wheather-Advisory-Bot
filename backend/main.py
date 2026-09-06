@@ -53,12 +53,8 @@ _extra_origins = [o.strip() for o in os.environ.get("FRONTEND_ORIGIN", "").split
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173", "http://localhost:3000",
-        "http://127.0.0.1:5173", "http://127.0.0.1:3000",
-        *_extra_origins,
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -209,6 +205,11 @@ async def chat_stream(request: ChatRequest):
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
+
+
+@app.get("/")
+async def root() -> dict[str, str]:
+    return {"message": "Weather Advisory Bot API is running", "docs": "/docs", "health": "/health"}
 
 
 @app.get("/health")
