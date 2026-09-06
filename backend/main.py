@@ -241,3 +241,31 @@ async def list_sops() -> list[dict]:
         }
         for s in _policy_store.get_all()
     ]
+
+
+@app.get("/debug/weather")
+async def debug_weather() -> dict:
+    """Diagnostic endpoint — tests geocode + weather fetch from this server.
+    Visit: https://wheather-advisory-bot.onrender.com/debug/weather
+    """
+    import traceback
+    from weather import geocode, fetch_weather, LocationNotFoundError, WeatherFetchError
+
+    results: dict = {}
+
+    # Step 1: Test geocoding London
+    try:
+        loc = geocode("London")
+        results["geocode"] = {"status": "ok", "result": loc}
+    except Exception as exc:
+        results["geocode"] = {"status": "error", "error": str(exc), "trace": traceback.format_exc()}
+        return results
+
+    # Step 2: Test weather fetch
+    try:
+        weather = fetch_weather(loc["lat"], loc["lon"])
+        results["weather"] = {"status": "ok", "temperature_2m": weather.get("temperature_2m"), "wind_speed_10m": weather.get("wind_speed_10m")}
+    except Exception as exc:
+        results["weather"] = {"status": "error", "error": str(exc), "trace": traceback.format_exc()}
+
+    return results
