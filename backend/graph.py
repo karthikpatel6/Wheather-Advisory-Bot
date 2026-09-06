@@ -57,12 +57,22 @@ logger = logging.getLogger(__name__)
 
 _policy_store = PolicyStore()
 
-_GROQ_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+_GROQ_MODELS = [
+    os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "llama3-70b-8192",
+    "llama3-8b-8192",
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it",
+]
 _GEMINI_MODELS = [
     os.getenv("GEMINI_MODEL", "gemini-3.7-flash"),
     "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
 ]
 # Groq first (faster, generous quota), Gemini as fallback — deduplicated
 _MODELS_TO_TRY = list(dict.fromkeys(_GROQ_MODELS + _GEMINI_MODELS))
@@ -122,6 +132,7 @@ def invoke_llm(messages: list[Any]) -> Any:
         "decommissioned", "deprecated", "no longer supported",
         "400", "422", "429", "model_not_active", "not_found",
         "resourceexhausted", "quota", "rate_limit", "rate limit",
+        "invalid_api_key", "unauthorized", "authentication", "notfounderror",
     )
 
     for model_name in _MODELS_TO_TRY:
@@ -154,6 +165,7 @@ def invoke_llm_stream(messages: list[Any]):
         "decommissioned", "deprecated", "no longer supported",
         "400", "422", "429", "model_not_active", "not_found",
         "resourceexhausted", "quota", "rate_limit", "rate limit",
+        "invalid_api_key", "unauthorized", "authentication", "notfounderror",
     )
     for model_name in _MODELS_TO_TRY:
         try:
@@ -235,6 +247,43 @@ def _route_after_llm_select(state: BotState) -> Literal["compose_reply", "no_gui
 #   4. Geocoding validates everything — LLM output only reaches geocode as a string
 # ---------------------------------------------------------------------------
 
+def _failsafe_location_extract(user_message: str) -> str | None:
+    """Emergency fallback location extractor used ONLY when ALL external LLM APIs fail (e.g. 429 quota limits or 404)."""
+    # 1. Preposition match (rightmost first)
+    matches = re.findall(
+        r'\b(?:in|at|near|around|from)\s+([A-Za-z\s\-]+?)(?=\s*(?:today|now|this|right|tomorrow|\?|\.|$))',
+        user_message,
+        re.IGNORECASE,
+    )
+    for match in reversed(matches):
+        candidate = match.strip()
+        if candidate and len(candidate.split()) <= 4:
+            try:
+                geocode(candidate)
+                logger.info("_failsafe_location_extract: matched preposition candidate '%s'", candidate)
+                return candidate
+            except LocationNotFoundError:
+                continue
+
+    # 2. Capitalized proper nouns check
+    words = [w.strip("?,!.\"':;") for w in user_message.split()]
+    stopwords = {
+        "is", "it", "safe", "to", "cycle", "drive", "walk", "run", "today", "now", "a",
+        "good", "day", "for", "picnic", "the", "in", "at", "from", "near", "what", "how",
+        "weather", "can", "i", "you", "we", "my", "your", "are", "there", "any"
+    }
+    for word in words:
+        if word and word[0].isupper() and word.lower() not in stopwords:
+            try:
+                geocode(word)
+                logger.info("_failsafe_location_extract: matched capitalized word '%s'", word)
+                return word
+            except LocationNotFoundError:
+                continue
+
+    return None
+
+
 def _extract_location_llm(user_message: str) -> str | None:
     """Ask LLM to extract the main city, town, region, or country from the user message."""
     system = (
@@ -254,8 +303,8 @@ def _extract_location_llm(user_message: str) -> str | None:
             return None
         return candidate
     except Exception as exc:
-        logger.warning("LLM location extraction failed: %s", exc)
-        return None
+        logger.warning("LLM location extraction failed: %s — executing emergency failsafe", exc)
+        return _failsafe_location_extract(user_message)
 
 def _resolve_query_context(current_msg: str, previous_query: str | None) -> str:
     """Combine or preserve the activity question when user provides a follow-up location or short answer."""
