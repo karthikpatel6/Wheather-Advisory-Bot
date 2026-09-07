@@ -86,8 +86,33 @@ _HEADERS = {
 }
 
 
+def _geocode_openweathermap(location_name: str, api_key: str) -> dict[str, Any]:
+    """Geocode using OpenWeatherMap Direct Geocoding API."""
+    url = "http://api.openweathermap.org/geo/1.0/direct"
+    params = {"q": location_name, "limit": 1, "appid": api_key}
+    resp = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT_S)
+    resp.raise_for_status()
+    results = resp.json()
+    if not results or not isinstance(results, list):
+        raise LocationNotFoundError(f"OpenWeatherMap geocoding found no results for '{location_name}'")
+    top = results[0]
+    lat = top.get("lat")
+    lon = top.get("lon")
+    if lat is None or lon is None:
+        raise LocationNotFoundError(f"OpenWeatherMap geocoding returned incomplete data for '{location_name}'")
+    
+    parts = [top.get("name", location_name)]
+    if top.get("state"):
+        parts.append(top["state"])
+    if top.get("country"):
+        parts.append(top["country"])
+    display_name = ", ".join(parts)
+    logger.info("OpenWeatherMap geocoded '%s' → %s (%.4f, %.4f)", location_name, display_name, lat, lon)
+    return {"lat": float(lat), "lon": float(lon), "display_name": display_name}
+
+
 def geocode(location_name: str) -> dict[str, Any]:
-    """Resolve a free-text location name to lat/lon via Open-Meteo geocoding.
+    """Resolve a free-text location name to lat/lon via OpenWeatherMap (if key present) or Open-Meteo geocoding.
 
     Returns:
         {"lat": float, "lon": float, "display_name": str}
@@ -105,6 +130,17 @@ def geocode(location_name: str) -> dict[str, Any]:
             logger.info("Geocode cache hit for '%s' → %s", location_name, cached_loc.get("display_name"))
             return cached_loc
 
+    # Priority 1: OpenWeatherMap Geocoding API if key is present
+    owm_key = os.getenv("OPENWEATHERMAP_API_KEY") or os.getenv("OPENWEATHER_API_KEY")
+    if owm_key and not owm_key.startswith("your_"):
+        try:
+            res = _geocode_openweathermap(location_name, owm_key)
+            _GEOCODE_CACHE[key] = (now, res)
+            return res
+        except Exception as exc:
+            logger.warning("OpenWeatherMap geocoding failed for '%s' (%s); falling back to Open-Meteo", location_name, exc)
+
+    # Priority 2: Open-Meteo Geocoding API
     params = {
         "name": location_name,
         "count": 1,
@@ -167,6 +203,69 @@ def geocode(location_name: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
+def _fetch_weather_openweathermap(lat: float, lon: float, api_key: str, target_hour: int | None = None) -> dict[str, Any]:
+    """Fetch current weather from OpenWeatherMap 2.5 API and map fields to standard schema."""
+    url = "https://api.openweathermap.org/data/2.5/weather"
+    params = {
+        "lat": lat,
+        "lon": lon,
+        "appid": api_key,
+        "units": "metric",  # Temp in °C, speed in m/s
+    }
+    resp = requests.get(url, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+
+    main = data.get("main", {})
+    wind = data.get("wind", {})
+    clouds = data.get("clouds", {})
+    rain_dict = data.get("rain", {})
+    snow_dict = data.get("snow", {})
+    weather_list = data.get("weather", [{}])
+    weather_first = weather_list[0] if weather_list else {}
+
+    temp_c = float(main.get("temp", 20.0))
+    feels_c = float(main.get("feels_like", temp_c))
+    humidity = float(main.get("humidity", 50.0))
+    pressure = float(main.get("pressure", 1013.0))
+
+    # Convert wind speed from m/s to km/h (1 m/s = 3.6 km/h)
+    wind_ms = float(wind.get("speed", 0.0))
+    wind_kmh = round(wind_ms * 3.6, 1)
+    gust_ms = float(wind.get("gust", wind_ms * 1.25))
+    gust_kmh = round(gust_ms * 3.6, 1)
+
+    rain_1h = float(rain_dict.get("1h", rain_dict.get("3h", 0.0)))
+    snow_1h = float(snow_dict.get("1h", snow_dict.get("3h", 0.0)))
+    precip_total = round(rain_1h + snow_1h, 1)
+
+    cloud_pct = float(clouds.get("all", 0.0))
+    vis_meters = float(data.get("visibility", 10000))
+    weather_code = int(weather_first.get("id", 800))
+
+    weather = {
+        "temperature_2m": temp_c,
+        "apparent_temperature": feels_c,
+        "relative_humidity_2m": humidity,
+        "wind_speed_10m": wind_kmh,
+        "wind_gusts_10m": gust_kmh,
+        "precipitation": precip_total,
+        "rain": rain_1h,
+        "showers": 0.0,
+        "snowfall": snow_1h,
+        "weather_code": weather_code,
+        "cloud_cover": cloud_pct,
+        "uv_index": 0.0,  # OpenWeatherMap basic endpoint default
+        "visibility": vis_meters,
+        "surface_pressure": pressure,
+    }
+    logger.info(
+        "OpenWeatherMap weather fetched for (%.4f, %.4f): temp=%.1f°C, wind=%.1f km/h",
+        lat, lon, temp_c, wind_kmh
+    )
+    return weather
+
+
 def _fetch_weather_wttr(lat: float, lon: float, target_hour: int | None = None) -> dict[str, Any]:
     """Fallback weather fetcher using wttr.in JSON API when Open-Meteo returns HTTP 429."""
     url = f"https://wttr.in/{lat:.4f},{lon:.4f}?format=j1"
@@ -212,15 +311,14 @@ def _fetch_weather_wttr(lat: float, lon: float, target_hour: int | None = None) 
 
 
 def fetch_weather(lat: float, lon: float, target_hour: int | None = None) -> dict[str, Any]:
-    """Fetch current or target hourly weather conditions from Open-Meteo for the given coordinates.
+    """Fetch current or target hourly weather conditions for the given coordinates.
 
-    If target_hour (0-23) is provided, extracts forecast values for that specific hour.
-    Otherwise fetches real-time current conditions.
+    Uses OpenWeatherMap if OPENWEATHERMAP_API_KEY is present, with Open-Meteo & wttr.in fallbacks.
 
     Returns a flat dict whose keys match _CURRENT_FIELDS.
 
     Raises:
-        WeatherFetchError: if the request fails or the payload is malformed.
+        WeatherFetchError: if all weather APIs fail.
     """
     cache_key = (round(lat, 2), round(lon, 2), target_hour)
     now = time.time()
@@ -235,6 +333,16 @@ def fetch_weather(lat: float, lon: float, target_hour: int | None = None) -> dic
                 lat, lon, str(target_hour), age,
             )
             return cached_weather
+
+    # Priority 1: OpenWeatherMap API if API key is configured
+    owm_key = os.getenv("OPENWEATHERMAP_API_KEY") or os.getenv("OPENWEATHER_API_KEY")
+    if owm_key and not owm_key.startswith("your_"):
+        try:
+            owm_weather = _fetch_weather_openweathermap(lat, lon, owm_key, target_hour)
+            _WEATHER_CACHE[cache_key] = (now, owm_weather)
+            return owm_weather
+        except Exception as exc:
+            logger.warning("OpenWeatherMap fetch failed for (%.4f, %.4f): %s; falling back to Open-Meteo", lat, lon, exc)
 
     # Open-Meteo hourly API supports a slightly different field set — only request hourly when needed
     _HOURLY_FIELDS = [
