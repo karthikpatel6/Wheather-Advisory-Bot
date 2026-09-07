@@ -204,3 +204,17 @@
     {{wind_speed_10m}} km/h and precipitation at {{precipitation}} mm. No major weather hazards are flagged.
     Have a safe and great activity!
 
+- id: SOP-012
+  category: vulnerable_groups
+  severity: low
+  match_type: semantic
+  applies_when: >
+    The user is asking whether it is safe for children, kids, or family to play outdoors, visit the park,
+    or spend time outside today, and weather conditions do not trigger any high-severity heat, storm, rain, or UV hazards (SOP-007, SOP-008, SOP-009).
+    This SOP provides a positive safety confirmation for children's outdoor play.
+  guidance: >
+    Weather conditions in your area are suitable for children to play outside.
+    Temperature is {{temperature_2m}}°C (feels like {{apparent_temperature}}°C) with winds at {{wind_speed_10m}} km/h and precipitation at {{precipitation}} mm.
+    No high heat, storm, or UV hazards are present. Have fun outdoors and stay hydrated!
+
+
