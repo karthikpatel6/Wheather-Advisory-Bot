@@ -68,12 +68,9 @@ _GROQ_MODELS = [
     "mixtral-8x7b-32768",
 ]
 _GEMINI_MODELS = [
-    os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-2.5-flash",
-    "gemini-3.7-flash",
+    os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
     "gemini-3.6-flash",
+    "gemini-3.7-flash",
 ]
 # Try models in sequence: Gemini models first, then Groq models — deduplicated
 _MODELS_TO_TRY = list(dict.fromkeys(_GEMINI_MODELS + _GROQ_MODELS))
