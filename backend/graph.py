@@ -75,8 +75,8 @@ _GEMINI_MODELS = [
     "gemini-3.7-flash",
     "gemini-3.6-flash",
 ]
-# Groq models first, then Gemini models — deduplicated
-_MODELS_TO_TRY = list(dict.fromkeys(_GROQ_MODELS + _GEMINI_MODELS))
+# Try models in sequence: Gemini models first, then Groq models — deduplicated
+_MODELS_TO_TRY = list(dict.fromkeys(_GEMINI_MODELS + _GROQ_MODELS))
 
 
 def _get_llm_instance(model_name: str) -> Any:
@@ -93,15 +93,15 @@ def _get_llm_instance(model_name: str) -> Any:
                 model=model_name,
                 temperature=0,
                 google_api_key=gemini_key,
-                max_retries=0,  # Fail fast on 429 rate limit to trigger immediate model failover
+                max_retries=0,  # Fail fast on errors to trigger immediate model failover
             )
         raise ValueError("GEMINI_API_KEY is not set or invalid in .env")
 
     if ChatGroq and groq_key and not groq_key.startswith("your_"):
-        return ChatGroq(model=model_name, temperature=0, api_key=groq_key, max_retries=1)
+        return ChatGroq(model=model_name, temperature=0, groq_api_key=groq_key, max_retries=0)
 
     raise ValueError(
-        "No valid LLM API key configured. Please set GEMINI_API_KEY in .env"
+        "No valid LLM API key configured for Groq/Gemini."
     )
 
 
@@ -128,14 +128,6 @@ def _get_content_text(content: Any) -> str:
 def invoke_llm(messages: list[Any]) -> Any:
     """Invoke LLM (Google Gemini or Groq) with automatic model fallback."""
     last_exc = None
-    _MODEL_ERROR_SIGNALS = (
-        "model_not_found", "does not exist", "404",
-        "decommissioned", "deprecated", "no longer supported",
-        "400", "422", "429", "model_not_active", "not_found",
-        "resourceexhausted", "quota", "rate_limit", "rate limit",
-        "invalid_api_key", "unauthorized", "authentication", "notfounderror",
-        "badrequesterror",
-    )
 
     for model_name in _MODELS_TO_TRY:
         if model_name in _UNHEALTHY_MODELS:
@@ -149,21 +141,18 @@ def invoke_llm(messages: list[Any]) -> Any:
         except Exception as exc:
             last_exc = exc
             err_str = str(exc).lower()
-            is_model_error = any(sig in err_str for sig in _MODEL_ERROR_SIGNALS)
-            if is_model_error:
-                if any(sig in err_str for sig in ("404", "400", "not_found", "notfounderror", "badrequesterror", "invalid_api_key", "unauthorized")):
-                    logger.warning(
-                        "LLM model '%s' returned permanent error (%s); blacklisting for session.",
-                        model_name, type(exc).__name__,
-                    )
-                    _UNHEALTHY_MODELS.add(model_name)
-                else:
-                    logger.warning(
-                        "LLM model '%s' unavailable (%s), trying next fallback...",
-                        model_name, type(exc).__name__,
-                    )
-                continue
-            raise exc
+            if any(sig in err_str for sig in ("404", "400", "not_found", "notfounderror", "badrequesterror", "invalid_api_key", "unauthorized")):
+                logger.warning(
+                    "LLM model '%s' returned permanent error (%s: %s); blacklisting for session.",
+                    model_name, type(exc).__name__, exc,
+                )
+                _UNHEALTHY_MODELS.add(model_name)
+            else:
+                logger.warning(
+                    "LLM model '%s' unavailable (%s: %s), trying next fallback model...",
+                    model_name, type(exc).__name__, exc,
+                )
+            continue
 
     if last_exc:
         raise last_exc
@@ -171,13 +160,6 @@ def invoke_llm(messages: list[Any]) -> Any:
 
 def invoke_llm_stream(messages: list[Any]):
     """Stream token chunks from LLM (Google Gemini or Groq) with automatic model fallback."""
-    _MODEL_ERROR_SIGNALS = (
-        "model_not_found", "does not exist", "404",
-        "decommissioned", "deprecated", "no longer supported",
-        "400", "422", "429", "model_not_active", "not_found",
-        "resourceexhausted", "quota", "rate_limit", "rate limit",
-        "invalid_api_key", "unauthorized", "authentication", "notfounderror",
-    )
     for model_name in _MODELS_TO_TRY:
         if model_name in _UNHEALTHY_MODELS:
             continue
@@ -192,12 +174,10 @@ def invoke_llm_stream(messages: list[Any]):
             return
         except Exception as exc:
             err_str = str(exc).lower()
-            if any(sig in err_str for sig in _MODEL_ERROR_SIGNALS):
-                if any(sig in err_str for sig in ("404", "400", "not_found", "notfounderror", "badrequesterror", "invalid_api_key", "unauthorized")):
-                    _UNHEALTHY_MODELS.add(model_name)
-                logger.warning("LLM stream model '%s' unavailable, trying fallback...", model_name)
-                continue
-            raise exc
+            if any(sig in err_str for sig in ("404", "400", "not_found", "notfounderror", "badrequesterror", "invalid_api_key", "unauthorized")):
+                _UNHEALTHY_MODELS.add(model_name)
+            logger.warning("LLM stream model '%s' unavailable (%s: %s), trying fallback...", model_name, type(exc).__name__, exc)
+            continue
 
 
 # ---------------------------------------------------------------------------

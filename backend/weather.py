@@ -167,6 +167,50 @@ def geocode(location_name: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
+def _fetch_weather_wttr(lat: float, lon: float, target_hour: int | None = None) -> dict[str, Any]:
+    """Fallback weather fetcher using wttr.in JSON API when Open-Meteo returns HTTP 429."""
+    url = f"https://wttr.in/{lat:.4f},{lon:.4f}?format=j1"
+    headers = {"User-Agent": "curl/7.68.0"}
+    resp = requests.get(url, headers=headers, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+
+    current_list = data.get("current_condition", [])
+    if not current_list:
+        raise WeatherFetchError("wttr.in returned no current_condition")
+
+    cur = current_list[0]
+    precip_mm = float(cur.get("precipMM", 0.0))
+    wind_kmh = float(cur.get("windspeedKmph", 0.0))
+    temp_c = float(cur.get("temp_C", 20.0))
+    feels_c = float(cur.get("FeelsLikeC", temp_c))
+    humidity = float(cur.get("humidity", 50.0))
+    uv = float(cur.get("uvIndex", 0.0))
+    cloud = float(cur.get("cloudcover", 0.0))
+    vis_km = float(cur.get("visibility", 10.0))
+    pressure = float(cur.get("pressure", 1013.0))
+    code = int(cur.get("weatherCode", 113))
+
+    weather = {
+        "temperature_2m": temp_c,
+        "apparent_temperature": feels_c,
+        "relative_humidity_2m": humidity,
+        "wind_speed_10m": wind_kmh,
+        "wind_gusts_10m": round(wind_kmh * 1.25, 1),
+        "precipitation": precip_mm,
+        "rain": precip_mm,
+        "showers": 0.0,
+        "snowfall": 0.0,
+        "weather_code": code,
+        "cloud_cover": cloud,
+        "uv_index": uv,
+        "visibility": vis_km * 1000.0,  # convert km to meters
+        "surface_pressure": pressure,
+    }
+    logger.info("wttr.in fallback weather fetched successfully for (%.4f, %.4f)", lat, lon)
+    return weather
+
+
 def fetch_weather(lat: float, lon: float, target_hour: int | None = None) -> dict[str, Any]:
     """Fetch current or target hourly weather conditions from Open-Meteo for the given coordinates.
 
@@ -256,6 +300,14 @@ def fetch_weather(lat: float, lon: float, target_hour: int | None = None) -> dic
                     lat, lon, str(target_hour), stale_age, last_exc
                 )
                 return stale_weather
+
+        # Secondary fallback: wttr.in JSON API
+        try:
+            wttr_weather = _fetch_weather_wttr(lat, lon, target_hour)
+            _WEATHER_CACHE[cache_key] = (now, wttr_weather)
+            return wttr_weather
+        except Exception as wttr_exc:
+            logger.warning("wttr.in fallback also failed for (%.4f, %.4f): %s", lat, lon, wttr_exc)
 
         raise WeatherFetchError(
             f"Network error while fetching weather for ({lat}, {lon}): {last_exc}"
