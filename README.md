@@ -2,19 +2,20 @@
 
 A production-grade, grounded Weather Advisory Support Bot built with **LangGraph**, **FastAPI**, and **React**. 
 
-The bot answers outdoor activity safety questions (*"Is it safe to cycle in Bhopal today?", "Is today good for a picnic in London?"*) by fetching **live weather data** from [Open-Meteo](https://open-meteo.com/) and strictly evaluating it against written **Standard Operating Procedures (SOPs)**.
+The bot answers outdoor activity safety questions (*"Is it safe to cycle in Bhopal today?", "Is today good for a picnic in London?", "Can my kids play outside in Delhi right now?"*) by fetching **live weather data** from [OpenWeatherMap](https://openweathermap.org/) (with [Open-Meteo](https://open-meteo.com/) and `wttr.in` fallbacks) and strictly evaluating it against written **Standard Operating Procedures (SOPs)**.
 
 ---
 
 ## 📌 Executive Summary & Problem Addressed
 
-When real weather events occur—such as the IMD-flagged low-pressure system bringing heavy to extremely heavy rainfall across Madhya Pradesh or squally 65 km/h winds off the Tamil Nadu coast—an AI assistant **must never guess** or offer generic advice (*"cycling is usually low-risk"*).
+When real weather events occur—such as extreme heatwaves, sudden downpours, high UV spikes, or squally winds—an AI assistant **must never guess** or offer generic advice (*"cycling is usually low-risk"*).
 
 ### Our Core Guarantees:
 1. **Zero Unvetted AI Opinions**: The model is not permitted to decide what is safe. Every piece of advice comes strictly from a written policy rule (**SOP**) controlled by business operators.
-2. **Deterministic Grounding**: Reported numbers (temperature, wind speed, gusts, precipitation) are fetched directly from Open-Meteo and substituted by Python template logic—never hallucinated by the model.
-3. **Honest Failure**: If no SOP covers a question, or if weather data/geocoding is unresolvable, the system returns a plain, honest fallback (*"I don't have guidance for that"* or *"Could not fetch live weather data"*) rather than inventing advice.
-4. **Zero-Code Policy Maintenance**: SOP policies live in `sops.yaml`. Business teams can add, remove, or modify policies live with zero application code changes.
+2. **Deterministic Grounding**: Reported numbers (temperature, wind speed, gusts, precipitation) are fetched directly from weather APIs and substituted by Python template logic—never hallucinated by the model.
+3. **Multi-Provider Resiliency**: Primary queries run via OpenWeatherMap (API key-isolated). If rate limits or network issues occur, the system automatically fails over to Open-Meteo (with global in-memory TTL caching and 1s backoff) and `wttr.in` JSON fallback.
+4. **Honest Failure**: If no SOP covers a question, or if weather data/geocoding is unresolvable, the system returns a plain, honest fallback (*"I don't have written safety guidance for that situation"*) rather than inventing advice.
+5. **Zero-Code Policy Maintenance**: SOP policies live in `sops.yaml`. Business teams can add, remove, or modify policies live with zero application code changes.
 
 ---
 
@@ -22,11 +23,12 @@ When real weather events occur—such as the IMD-flagged low-pressure system bri
 
 * **Agent Framework**: LangGraph (Python) with `MemorySaver` check-pointing
 * **Backend API**: FastAPI, Uvicorn, Pydantic, Server-Sent Events (SSE)
-* **LLM Orchestration**: `langchain-google-genai` / `google-genai` (Google Gemini `gemini-3.7-flash` with zero-delay failover to `gemini-3.6-flash`, `gemini-3.5-flash`, and Groq)
-* **Weather Data & Geocoding**: Open-Meteo Forecast & Geocoding APIs (Free, no key required)
+* **LLM Orchestration**: `langchain-google-genai` / `google-genai` (Google Gemini `gemini-3.6-flash` & `gemini-3.7-flash` with zero-delay failover on 503 high demand spikes to alternative Gemini & Groq models)
+* **Weather Data & Geocoding**: 
+  - **Primary**: OpenWeatherMap 2.5 Weather & Direct Geocoding APIs (API Key based)
+  - **Secondary**: Open-Meteo Forecast & Geocoding APIs (15-min in-memory TTL cache + 1s backoff)
+  - **Tertiary**: `wttr.in` JSON API fallback
 * **Frontend**: React, Vite, Vanilla CSS (Streaming SSE typewriter response rendering)
-
----
 
 ---
 
@@ -35,21 +37,22 @@ When real weather events occur—such as the IMD-flagged low-pressure system bri
 ### Representation Choice & Note
 > **SOP representation choice:** SOPs are stored in human-readable `sops.yaml` files and loaded at runtime by `PolicyStore`. YAML was chosen because it provides a human-readable, schema-validatable structure that decouples policy maintainability from application code, allowing business operators to add or update rules live without code changes or redeployments.
 
-### Summary of Policy Rules (11 SOPs across 6 Categories)
+### Summary of Policy Rules (12 SOPs across 6 Categories)
 
 | SOP ID | Category | Severity | Match Type | Trigger / Applies When |
 | :--- | :--- | :--- | :--- | :--- |
-| **SOP-001** | Wind | `high` | Numeric | Wind speed > 40 km/h or gusts > 50 km/h (Cycling / Two-wheelers) |
-| **SOP-002** | UV Index | `moderate` | Numeric | UV Index ≥ 8 between 11am–4pm (Outdoor exercise) |
-| **SOP-003** | Heat | `moderate` | Numeric | Temperature ≥ 35°C or apparent temp ≥ 38°C (Outdoor exercise) |
-| **SOP-004** | Rain | `low` | Numeric | Rain probability ≥ 70% or precipitation ≥ 5mm (Travel & commuting) |
-| **SOP-005** | Travel | `high` | Numeric | Wind speed > 50 km/h or gusts > 65 km/h (High-profile vehicles / highway travel) |
-| **SOP-006** | Travel | `low` | Numeric | Temperature ≤ 2°C or visibility < 1000m (Road travel) |
-| **SOP-007** | Vulnerable Groups | `high` | Numeric | Temperature ≥ 35°C or UV Index ≥ 9 (Elderly & outdoor activities) |
-| **SOP-008** | Children UV | `moderate` | Numeric | UV Index ≥ 6 (Children outdoor play / park visits) |
-| **SOP-009** | Severe Weather | `critical` | Fuzzy / Mixed | Active low-pressure system, cyclone, or heavy rainfall (>20mm/h or wind >60km/h) |
-| **SOP-010** | Comfort | `low` | Fuzzy | Picnic / outdoor social gathering (Evaluates rain, wind, temp comfort) |
-| **SOP-011** | Exercise | `low` | Numeric | Temperature 15–24°C, wind < 20 km/h, no rain (Ideal running conditions) |
+| **SOP-001** | Outdoor Exercise | `high` | Numeric | Wind speed > 50 km/h (Cycling / Two-wheelers) |
+| **SOP-002** | Outdoor Exercise | `moderate` | Numeric | UV Index ≥ 8 (Outdoor exercise sun protection) |
+| **SOP-003** | Outdoor Exercise | `moderate` | Numeric | Temperature > 32°C (Outdoor exercise heat stress) |
+| **SOP-004** | Outdoor Exercise | `low` | Numeric | Precipitation > 5 mm/hr (Outdoor exercise disruption) |
+| **SOP-005** | Travel | `high` | Numeric | Wind gusts > 70 km/h (Driving / Highway road travel) |
+| **SOP-006** | Travel | `low` | Semantic | General road trip / travel suitability assessment |
+| **SOP-007** | Vulnerable Groups | `high` | Numeric | Apparent Temperature > 40°C (Elderly & vulnerable heat risk) |
+| **SOP-008** | Vulnerable Groups | `moderate` | Numeric | UV Index ≥ 6 (Children outdoor play / park visits) |
+| **SOP-009** | Severe Weather | `critical` | Semantic | Active storm, cyclone, or severe weather system override |
+| **SOP-010** | Outdoor Exercise | `low` | Semantic | Picnic / outdoor social gathering comfort |
+| **SOP-011** | Outdoor Exercise | `low` | Semantic | Normal cycling / running / outdoor exercise safety confirmation |
+| **SOP-012** | Vulnerable Groups | `low` | Semantic | Children & family outdoor play safety confirmation under safe weather |
 
 ---
 
@@ -87,11 +90,11 @@ graph TD
 
 ### Defense of Component Boundaries
 
-* **`resolve_location` (Deterministic + LLM Assist)**: High-confidence 1–3 word city queries geocode directly via Open-Meteo Geocoding API to save quota. Multi-word natural queries use LLM extraction, validated strictly against Open-Meteo geocoding. Unresolvable places branch immediately to `honest_failure`.
-* **`fetch_weather` (Deterministic API)**: Calls Open-Meteo forecast API with explicit parameters (`temperature_2m`, `wind_speed_10m`, `precipitation`, `uv_index`, `visibility`). Network or API failures branch immediately to `honest_failure`.
+* **`resolve_location` (Deterministic + LLM Assist)**: Uses OpenWeatherMap Direct Geocoding API (with Open-Meteo fallback) cached in-memory for 1 hour. Natural phrasing extracted via LLM. Unresolvable places branch immediately to `honest_failure`.
+* **`fetch_weather` (Multi-Provider API)**: Priority 1 uses OpenWeatherMap 2.5 API with automatic unit conversion (m/s → km/h). Priority 2 uses Open-Meteo (15-min in-memory TTL cache + 1s backoff). Priority 3 uses `wttr.in` JSON API. All providers return the same flat dict schema keyed by `_CURRENT_FIELDS`.
 * **`filter_numeric_sops` (Deterministic Python)**: Evaluates all numerical constraints in `sops.yaml` against fetched weather values in pure Python. Eliminates non-matching numeric policies before calling the LLM.
-* **`llm_select_sop` (Structured LLM)**: Given candidate SOPs (and all SOPs for fuzzy matches), the LLM selects the single best-fitting policy rule in JSON format based on activity semantic intent.
-* **`compose_reply` (Deterministic Template Substitution)**: Replaces `{{wind_speed_kmh}}`, `{{precipitation_mm}}`, and `{{temperature_c}}` placeholders in the selected SOP template with actual Open-Meteo numbers. The model is **never allowed** to write raw numbers directly.
+* **`llm_select_sop` (Structured LLM)**: Given candidate SOPs, the LLM selects the single best-fitting policy rule in JSON format based on activity semantic intent.
+* **`compose_reply` (Deterministic Template Substitution)**: Replaces `{{wind_speed_10m}}`, `{{precipitation}}`, and `{{temperature_2m}}` placeholders in the selected SOP template with actual weather values. The model is **never allowed** to write raw numbers directly.
 
 ---
 
@@ -106,7 +109,7 @@ Session state is persisted using LangGraph's `MemorySaver` keyed by `thread_id`.
 
 ## 🔍 Grounding & Zero-Hallucination Guarantees
 
-1. **Template Placeholder Substitution**: SOP response templates contain placeholders like `{{wind_speed_kmh}}`. Python code replaces these placeholders using the actual Open-Meteo API response dictionary.
+1. **Template Placeholder Substitution**: SOP response templates contain placeholders like `{{wind_speed_10m}}` and `{{temperature_2m}}`. Python code replaces these using the actual weather API response dictionary (sourced from OpenWeatherMap, Open-Meteo, or wttr.in).
 2. **Auditability (`weather_used` & `sop_id`)**: Every API response contains:
    ```json
    {
@@ -142,25 +145,30 @@ Run the evaluation suite via `python backend/evals.py`.
 
 ---
 
-## 🧪 How to Test Adding a 11th SOP Live (Zero-Code Change)
+## 🧪 How to Add a New SOP Live (Zero-Code Change)
 
-During a live review call, you can add an 11th SOP live on the spot without modifying any Python code:
+You can add a new SOP live on the spot without modifying any Python code. For example, to add boating safety guidance:
 
 1. Open `sops.yaml`.
 2. Append a new SOP definition at the bottom:
    ```yaml
-   - id: "SOP-012"
-     category: "Boating"
-     severity: "high"
-     match_type: "numeric"
-     applies_when: "The user asks about boating or kayaking and wave height or wind speed exceeds 30 km/h."
-     conditions:
-       wind_speed_10m: { gt: 30.0 }
-     template: "Wind speeds are currently {{wind_speed_10m}} km/h. Boating or kayaking is not recommended due to high wave and capsize risks."
+   - id: SOP-013
+     category: boating
+     severity: high
+     match_type: numeric
+     condition:
+       field: wind_speed_10m
+       operator: ">"
+       value: 30
+     applies_when: >
+       The user asks about boating, kayaking, or water activities and wind speed exceeds 30 km/h.
+     guidance: >
+       Wind speeds are currently {{wind_speed_10m}} km/h.
+       Boating or kayaking is not recommended due to high wave and capsize risks.
    ```
 3. Save `sops.yaml` and restart backend (`uvicorn main:app --reload`).
 4. Ask *"Is it safe to go kayaking in Mumbai today?"*.
-5. The system immediately matches `SOP-012` and substitutes live wind values with zero Python code changes!
+5. The system immediately matches `SOP-013` and substitutes live wind values with zero Python code changes!
 
 ---
 
