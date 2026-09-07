@@ -8,7 +8,7 @@ Two public functions:
 Both raise typed exceptions on failure so the graph can route cleanly
 to honest_failure without try/except at the call site.
 
-Open-Meteo is free and requires no API key.
+Open-Meteo is free and requires no API key by default.
 All field names in the returned weather dict exactly match the Open-Meteo
 response field names so they can be used directly in SOP condition.field
 checks and placeholder substitution.
@@ -17,6 +17,8 @@ checks and placeholder substitution.
 from __future__ import annotations
 
 import logging
+import os
+import time
 from typing import Any
 
 import requests
@@ -37,7 +39,7 @@ class WeatherFetchError(Exception):
 
 
 # --------------------------------------------------------------------------
-# Constants
+# Constants & Caches
 # --------------------------------------------------------------------------
 
 _GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
@@ -64,6 +66,14 @@ _CURRENT_FIELDS = [
 
 _REQUEST_TIMEOUT_S = 10  # seconds
 
+# Global in-memory TTL caches across all sessions
+_GEOCODE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_GEOCODE_TTL_S = 3600  # 1 hour
+
+_WEATHER_CACHE: dict[tuple[float, float, int | None], tuple[float, dict[str, Any]]] = {}
+_WEATHER_TTL_S = 900  # 15 minutes fresh TTL
+_WEATHER_STALE_TTL_S = 86400  # 24 hours stale fallback TTL on API failure / 429
+
 
 # --------------------------------------------------------------------------
 # Geocoding
@@ -85,6 +95,16 @@ def geocode(location_name: str) -> dict[str, Any]:
     Raises:
         LocationNotFoundError: if no results are returned or request fails.
     """
+    key = location_name.strip().lower()
+    now = time.time()
+
+    # Check global in-memory cache
+    if key in _GEOCODE_CACHE:
+        ts, cached_loc = _GEOCODE_CACHE[key]
+        if now - ts < _GEOCODE_TTL_S:
+            logger.info("Geocode cache hit for '%s' → %s", location_name, cached_loc.get("display_name"))
+            return cached_loc
+
     params = {
         "name": location_name,
         "count": 1,
@@ -93,6 +113,8 @@ def geocode(location_name: str) -> dict[str, Any]:
     }
     last_exc = None
     for attempt in range(2):
+        if attempt > 0:
+            time.sleep(1)
         try:
             resp = requests.get(_GEOCODE_URL, params=params, headers=_HEADERS, timeout=_REQUEST_TIMEOUT_S)
             resp.raise_for_status()
@@ -102,6 +124,11 @@ def geocode(location_name: str) -> dict[str, Any]:
             last_exc = exc
             logger.warning("Geocoding attempt %d failed for '%s': %s", attempt + 1, location_name, exc)
     else:
+        # Check if stale cached item exists before giving up
+        if key in _GEOCODE_CACHE:
+            _, cached_loc = _GEOCODE_CACHE[key]
+            logger.warning("Geocoding failed for '%s'; serving cached fallback result", location_name)
+            return cached_loc
         raise LocationNotFoundError(
             f"Network error while geocoding '{location_name}': {last_exc}"
         )
@@ -129,8 +156,10 @@ def geocode(location_name: str) -> dict[str, Any]:
         parts.append(top["country"])
     display_name = ", ".join(parts)
 
+    res = {"lat": lat, "lon": lon, "display_name": display_name}
+    _GEOCODE_CACHE[key] = (now, res)
     logger.info("Geocoded '%s' → %s (%.4f, %.4f)", location_name, display_name, lat, lon)
-    return {"lat": lat, "lon": lon, "display_name": display_name}
+    return res
 
 
 # --------------------------------------------------------------------------
@@ -149,6 +178,20 @@ def fetch_weather(lat: float, lon: float, target_hour: int | None = None) -> dic
     Raises:
         WeatherFetchError: if the request fails or the payload is malformed.
     """
+    cache_key = (round(lat, 2), round(lon, 2), target_hour)
+    now = time.time()
+
+    # Step 1: Check fresh global in-memory cache (15 min)
+    if cache_key in _WEATHER_CACHE:
+        ts, cached_weather = _WEATHER_CACHE[cache_key]
+        age = now - ts
+        if age < _WEATHER_TTL_S:
+            logger.info(
+                "Weather cache hit for (%.4f, %.4f, target_hour=%s) (age=%.1fs)",
+                lat, lon, str(target_hour), age,
+            )
+            return cached_weather
+
     # Open-Meteo hourly API supports a slightly different field set — only request hourly when needed
     _HOURLY_FIELDS = [
         "temperature_2m",
@@ -175,13 +218,20 @@ def fetch_weather(lat: float, lon: float, target_hour: int | None = None) -> dic
         "forecast_days": 1,
     }
 
+    open_meteo_key = os.getenv("OPEN_METEO_API_KEY")
+    if open_meteo_key:
+        params["apikey"] = open_meteo_key
+
     # Only request hourly data if we actually need it for a specific time
     if target_hour is not None:
         params["hourly"] = ",".join(_HOURLY_FIELDS)
         params["forecast_days"] = 2
 
     last_exc = None
+    data = None
     for attempt in range(2):
+        if attempt > 0:
+            time.sleep(1)  # 1s backoff before retrying
         try:
             resp = requests.get(_FORECAST_URL, params=params, headers=_HEADERS, timeout=15)
             if not resp.ok:
@@ -196,6 +246,17 @@ def fetch_weather(lat: float, lon: float, target_hour: int | None = None) -> dic
             last_exc = exc
             logger.warning("Weather fetch attempt %d failed for (%.4f, %.4f): %s", attempt + 1, lat, lon, exc)
     else:
+        # On failure (e.g. 429 Too Many Requests), check if stale cache item exists
+        if cache_key in _WEATHER_CACHE:
+            ts, stale_weather = _WEATHER_CACHE[cache_key]
+            stale_age = now - ts
+            if stale_age < _WEATHER_STALE_TTL_S:
+                logger.warning(
+                    "Serving STALE cached weather for (%.4f, %.4f, target_hour=%s) (age=%.1fs) due to API error: %s",
+                    lat, lon, str(target_hour), stale_age, last_exc
+                )
+                return stale_weather
+
         raise WeatherFetchError(
             f"Network error while fetching weather for ({lat}, {lon}): {last_exc}"
         )
@@ -235,11 +296,15 @@ def fetch_weather(lat: float, lon: float, target_hour: int | None = None) -> dic
                 weather.get("wind_speed_10m", float("nan")),
                 weather.get("uv_index", float("nan")),
             )
+            _WEATHER_CACHE[cache_key] = (now, weather)
             return weather
 
     # Default to current real-time weather
     if not current or not isinstance(current, dict):
         logger.error("Unexpected weather payload structure: %s", data)
+        # Stale cache check for malformed responses
+        if cache_key in _WEATHER_CACHE:
+            return _WEATHER_CACHE[cache_key][1]
         raise WeatherFetchError("Open-Meteo returned an unexpected payload structure")
 
     for field in _CURRENT_FIELDS:
@@ -256,4 +321,6 @@ def fetch_weather(lat: float, lon: float, target_hour: int | None = None) -> dic
         weather.get("wind_speed_10m", float("nan")),
         weather.get("uv_index", float("nan")),
     )
+    _WEATHER_CACHE[cache_key] = (now, weather)
     return weather
+

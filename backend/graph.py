@@ -59,14 +59,23 @@ _policy_store = PolicyStore()
 
 _UNHEALTHY_MODELS: set[str] = set()
 
-_GROQ_MODELS = ["llama-3.3-70b-versatile"]
+_GROQ_MODELS = [
+    os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "llama-3.1-70b-versatile",
+    "llama3-70b-8192",
+    "mixtral-8x7b-32768",
+]
 _GEMINI_MODELS = [
-    os.getenv("GEMINI_MODEL", "gemini-3.7-flash"),
+    os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-2.5-flash",
     "gemini-3.7-flash",
     "gemini-3.6-flash",
-    "gemini-3.5-flash",
 ]
-# Groq first (llama-3.3-70b-versatile), then 3 Gemini models — deduplicated
+# Groq models first, then Gemini models — deduplicated
 _MODELS_TO_TRY = list(dict.fromkeys(_GROQ_MODELS + _GEMINI_MODELS))
 
 
