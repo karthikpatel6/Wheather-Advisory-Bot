@@ -218,3 +218,26 @@
     No high heat, storm, or UV hazards are present. Have fun outdoors and stay hydrated!
 
 
+- id: SPO-013
+  category: outdoor_exercise
+  severity: low
+  match_type: semantic
+  applies_when: >
+    When the user is asking wheather to for swimming in pools, ponds, tanks, and other water bodies.
+  guidance: >
+    Weather conditions in your area are suitable for children to play outside.
+    Temperature is {{temperature_2m}}°C (feels like {{apparent_temperature}}°C) with winds at {{wind_speed_10m}} km/h and precipitation at {{precipitation}} mm.
+    If the temperature is greater then 32 degrees C then tell the user just grab a coke and enjoy at home.
+    If the temperature is greater then 28 degrees C then tell the user that he/she's skin might get burned.
+
+- id: SPO-014
+  category: outdoor_exercise
+  severity: low
+  match_type: semantic
+  applies_when: >
+    When the user is asking wheather to for climbing hills/mountains.
+  guidance: >
+    Weather conditions in your area are suitable for children to play outside.
+    Temperature is {{temperature_2m}}°C (feels like {{apparent_temperature}}°C) with winds at {{wind_speed_10m}} km/h and precipitation at {{precipitation}} mm.
+    If the temperature is greater then 31 degrees C then tell the user just grab a coke and enjoy at home.
+    If the temperature is greater then 28 degrees C then tell the user that he/she's skin might get burned please use SPF-32.

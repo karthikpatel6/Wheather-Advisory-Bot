@@ -543,8 +543,17 @@ def llm_select_sop(state: BotState) -> dict[str, Any]:
         end = raw.rfind("}")
         if start != -1 and end > start:
             json_str = raw[start : end + 1]
+            # Some LLM outputs may include unescaped control characters
+            # (e.g. vertical tabs, form feeds) which break json.loads.
+            # Sanitize by removing C0 control characters except common
+            # whitespace that JSON allows when escaped.
+            def _sanitize_json_for_load(s: str) -> str:
+                # Remove control chars except tab(\t), newline(\n), carriage return(\r)
+                return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", " ", s)
+
             try:
-                parsed = json.loads(json_str)
+                cleaned = _sanitize_json_for_load(json_str)
+                parsed = json.loads(cleaned)
                 sop_id = parsed.get("sop_id")
                 reasoning = parsed.get("reasoning", "")
                 if sop_id is not None and _policy_store.get_by_id(sop_id) is None:
@@ -699,7 +708,8 @@ STRICT INSTRUCTIONS:
 2. Incorporate the core safety advice from the SOP guidance. Do not add outside safety rules.
 3. For any weather numbers cited, use ONLY {{{{field_name}}}} placeholder syntax — e.g., {{{{temperature_2m}}}} or {{{{wind_speed_10m}}}}.
 4. Available weather placeholders: {', '.join(weather.keys())}
-5. Do NOT include markdown code blocks, preamble, or meta-commentary. Output ONLY the response text."""
+5. Do NOT include markdown code blocks, preamble, or meta-commentary. Output ONLY the response text.
+6. If the user say user says any inapporiate query like fuck you or any other foul words just respond and say just chill bro"""
 
     user_prompt = f"""User question: {user_msg}
 Location: {location.get('display_name', 'your location')}
